@@ -20,195 +20,185 @@
 
 #include "debugprint.h"
 
-void uart_read(unsigned char* buf, uint8_t len) {
-	for (uint8_t i = 0; i < len; i ++) {
-		*buf++ = uart_getc();
-	}
-}
+//#define UART_BAUD_SELECT(baudRate, xtalCpu)   ((xtalCpu)/((baudRate)*16l)-1)
+//#define B9600 UART_BAUD_SELECT(9600, F_CPU)
+//
+//void uart_init( void )
+//{
+//  //настройка скорости обмена
+//	  UBRR0H = (unsigned char) (B9600>>8);
+//	  UBRR0L = (unsigned char) B9600;
+//
+//  //8 бит данных, 1 стоп бит, без контроля четности
+//  UCSR0C = ( 1 << USBS0 ) | ( 1 << UCSZ01 ) | ( 1 << UCSZ00 );
+//
+//  //разрешить прием и передачу данных
+//  UCSR0B = ( 1 << TXEN0 ) | ( 1 <<RXEN0 );
+//}
+//
+//unsigned char uart_getc( void )
+//{
+//   //ждем приема байта
+//   while( ( UCSR0A & ( 1 << RXC0 ) ) == 0  );
+//   //считываем принятый байт
+//   return UDR0;
+//}
+//
+//void uart_putc( char c )
+//{
+//  //ждем окончания передачи предыдущего байта
+//  while( ( UCSR0A & ( 1 << UDRE0 ) ) == 0 );
+//  UDR0 = c;
+//}
 
-void uart_write(unsigned char* buf, uint8_t len) {
-	for (uint8_t i = 0; i < len; i ++) {
-		uart_putc(*buf++);
-	}
-}
 
+static uint8_t transfer_buf[64];
 
-
-int doSlave(unsigned char* message) {
+int doSlave(uint8_t* message) {
 	int i;
-	unsigned char cmd = message[1];
-	int result = 0;
-	unsigned char retval = 0;
-	switch (cmd) {
-	case 0x10: {
-		debugPrint("DS2480B_Detect\r\n");
-		retval = DS2480B_Detect() ? 0x00 : 0xff;
-		debugPrint("DS2480B_Detect:%02x\r\n", retval);
-		debugPrint("channel=%02X cmd=PING retval=%02X\r\n", message[0], retval);
-	}
-		break;
-	case 0x11: {
-		unsigned char r = OWFirst() ? 1 : 0;
-		result = 1;
-		message[3] = r;
-		debugPrint("channel=%02X cmd=FINDFIRSTDEVICE retval=%02X\r\n", message[0],
+	uint8_t cmd = message[0];
+	uint8_t datalen = 0;
+	uint8_t retval = 0;
+	if (cmd == 0x10) {
+		debugPrint("cmd=PING retval=%02X\r\n", retval);
+	} else if (cmd == 0x11) {
+		transfer_buf[1] = OWFirst() ? 1 : 0;
+		datalen = 1;
+		debugPrint("cmd=FINDFIRSTDEVICE retval=%02X\r\n",
 				retval);
-	}
-		break;
-	case 0x12: {
-		unsigned char r = OWNext() ? 1 : 0;
-		result = 1;
-		message[3] = r;
-
-		debugPrint("channel=%02X cmd=FINDNEXTDEVICE retval=%02X\r\n", message[0],
+	} else if (cmd == 0x12) {
+		transfer_buf[1] = OWNext() ? 1 : 0;
+		datalen = 1;
+		debugPrint("cmd=FINDNEXTDEVICE retval=%02X\r\n",
 				retval);
-	}
-		break;
-	case 0x13: {
-		result = 8;
+	} else if (cmd == 0x13) {
+		datalen = 8;
 		for (i = 0; i < 8; i++) {
-			message[i + 3] = getROM_NO(i);
+			transfer_buf[i + 1] = getROM_NO(i);
 		}
-		debugPrint("channel=%02X cmd=GETADDRESS retval=%02X\r\n", message[0],
+		debugPrint("cmd=GETADDRESS retval=%02X\r\n",
 				retval);
-	}
-		break;
-	case 0x16: {
+	} else if (cmd == 0x16) {
 		OWTargetSetup(0x00);
-		debugPrint("channel=%02X cmd=SETSEARCHALLDEVICES retval=%02X\r\n", message[0],
+		debugPrint("cmd=SETSEARCHALLDEVICES retval=%02X\r\n",
 				retval);
-	}
-		break;
-	case 0x19: {
-		message[3] = OWReadByte();
-		result = 1;
-		debugPrint("channel=%02X cmd=READBYTE retval=%02X\r\n", message[0],
+	} else if (cmd == 0x19) {
+		transfer_buf[1] = OWReadByte();
+		datalen = 1;
+		debugPrint("cmd=READBYTE retval=%02X\r\n",
 				retval);
-	}
-		break;
-	case 0x1B: {
-		unsigned char len;
-		unsigned char* _buf;
-		len = message[2];
-		_buf = message + 3;
-		OWBlock(_buf, len);
-		result = len;
-		debugPrint("channel=%02X cmd=DATABLOCK retval=%02X\r\n", message[0],
+	} else if (cmd == 0x1B) {
+		uint8_t len;
+		uint8_t* _buf;
+		len = message[1];
+		_buf = message + 2;
+		retval = OWBlock(_buf, len) ? 0x00 : 0xFF;
+		memcpy(transfer_buf + 1, _buf, len);
+		datalen = len;
+		debugPrint("cmd=DATABLOCK retval=%02X\r\n",
 				retval);
-	}
-		break;
-	case 0x1C: {
-		message[3] = OWReset();
-		result = 1;
-		debugPrint("channel=%02X cmd=RESET retval=%02X\r\n", message[0], retval);
-	}
-		break;
-	case 0x1D: {
-		OWWriteByte(message[3]);
-		debugPrint("channel=%02X cmd=WRITEBYTEPOWER retval=%02X\r\n", message[0],
+	} else if (cmd == 0x1C) {
+		transfer_buf[1] = OWReset();
+		datalen = 1;
+		debugPrint("cmd=RESET retval=%02X\r\n",
 				retval);
-	}
-		break;
-	case 0x1E: {
+	} else if (cmd == 0x1D) {
+		OWWriteByte(message[1]);
+		debugPrint("cmd=WRITEBYTEPOWER retval=%02X\r\n",
+				retval);
+	} else if (cmd == 0x1E) {
 		OWLevel(MODE_NORMAL);
-		debugPrint("channel=%02X cmd=SETPOWERNORMAL retval=%02X\r\n", message[0],
+		debugPrint("cmd=SETPOWERNORMAL retval=%02X\r\n",
 				retval);
-	}
-		break;
-	case 0x1F: {
-		OWTargetSetup(message[3]);
-		debugPrint("channel=%02X cmd=TARGETFAMILYSETUP retval=%02X\r\n", message[0],
+	} else if (cmd == 0x1F) {
+		OWTargetSetup(message[1]);
+		debugPrint("cmd=TARGETFAMILYSETUP retval=%02X\r\n",
 				retval);
-	}
-		break;
-	case 0x20: {
+	} else if (cmd == 0x20) {
 		OWFamilySkipSetup();
-		debugPrint("channel=%02X cmd=TARGETALLFAMILIES retval=%02X\r\n", message[0],
+		debugPrint("cmd=TARGETALLFAMILIES retval=%02X\r\n",
 				retval);
-	}
-		break;
-	case 0x21: {
-		message[3] = OWSearchROM(message+3);
-		result = 1;
-		debugPrint("channel=%02X cmd=SEARCHROM retval=%02X\r\n", message[0],
+	} else if (cmd == 0x21) {
+		uint8_t address[8];
+		memcpy(address, message + 2, 8);
+		transfer_buf[1] = OWSearchROM(address);
+		datalen = 1;
+		debugPrint("cmd=SEARCHROM retval=%02X\r\n",
 				retval);
-	}
-		break;
-	case 0x22: {
-		message[3] = OWMatchROM(message+3);
-		result = 1;
-		debugPrint("channel=%02X cmd=SEARCHROM retval=%02X\r\n", message[0],
-				retval);
-	}
-		break;
-	default:
-		debugPrint("default\r\n");
-		break;
-	}
-	message[1] = retval;
-	message[2] = result;
-return result;
-}
+	} else if (cmd == 0x22) {
+		uint8_t address[8];
+		memcpy(address, message + 2, 8);
 
+		transfer_buf[1] = OWMatchROM(address);// ? 1 : 0;
+		datalen = 1;
+		debugPrint("cmd=MATCHROM retval=%02X\r\n",
+				retval);
+	} else {
+		retval = 0xFF;
+		debugPrint("default\r\n");
+	}
+	transfer_buf[0] = retval;
+	if (retval == 0xFF) {
+		return 1;
+	}
+//	message[2] = datalen;
+	return datalen + 1;
+}
 
 int bytesRead = 0;
-unsigned char channel = -1;
-unsigned char transfer_buf[32];
+uint8_t channel = -1;
+uint8_t* msg;
 int phase = 0;
 
 int main(void) {
-	uart_init(UART_BAUD_SELECT_DOUBLE_SPEED(9600, F_CPU));
+
+	msg = transfer_buf;
+
+	uart_init(UART_BAUD_SELECT_DOUBLE_SPEED(57600, F_CPU));
 	setPins(0x10);
-	nrf24l01_init();
+
+//	nrf24l01_init();
+//	uint8_t addrtx0[NRF24L01_ADDRSIZE] = NRF24L01_ADDRP0;
+//	nrf24l01_settxaddr(addrtx0);
+//	nrf24l01_enabledynamicpayloads();
+
 	sei();
 
-	uint8_t addrtx0[NRF24L01_ADDRSIZE] = NRF24L01_ADDRP0;
-	nrf24l01_settxaddr(addrtx0);
-	nrf24l01_enabledynamicpayloads();
-
 	for (;;) {
-		unsigned char databyte;
+		int databyte;
 		switch (phase) {
 		case 0: {
 			if (uart_available()) {
 				databyte = uart_getc();
-				transfer_buf[bytesRead++] = databyte;
+				if (bytesRead == 0) {
+					if (databyte == 0xDD)
+					transfer_buf[bytesRead++] = databyte;
+				} else {
+					transfer_buf[bytesRead++] = databyte;
+				}
 			}
 			if (bytesRead == 4) {
-				if (transfer_buf[0] == 0x0) {
-					transfer_buf[0] = transfer_buf[1];
-					transfer_buf[1] = transfer_buf[2];
-					transfer_buf[2] = transfer_buf[3];
-					bytesRead = 3;
+				channel = transfer_buf[1];
+				msg = transfer_buf + 2;
+				debugPrint(
+						"received command channel=%02X cmd=%02X len=%02X\r\n",
+						channel, msg[0], msg[1]);
+				bytesRead = 0;
+				if (msg[1] == 0) {
+					phase = 4;
 				} else {
-					bytesRead = 0;
-					if (transfer_buf[0] == 0xff) {
-						channel = transfer_buf[1];
-						transfer_buf[0] = transfer_buf[1];
-						transfer_buf[1] = transfer_buf[2];
-						transfer_buf[2] = transfer_buf[3];
-						debugPrint(
-								"received command channel=%02X cmd=%02X len=%02X\r\n",
-								channel, transfer_buf[1], transfer_buf[2]);
-						if (transfer_buf[2] == 0) {
-							phase = 4;
-						} else {
-							phase = 3;
-						}
-					} else {
-						phase = 0;
-					}
+					phase = 3;
 				}
 			}
 		}
 			break;
 		case 3: {
-			if (bytesRead == transfer_buf[2]) {
+			if (bytesRead == msg[1]) {
 				phase = 4;
 			} else {
 				if (uart_available() > 0) {
 					databyte = uart_getc();
-					transfer_buf[bytesRead + 3] = databyte;
+					*(msg + bytesRead + 2) = databyte;
 					bytesRead++;
 				}
 			}
@@ -216,57 +206,26 @@ int main(void) {
 			break;
 		case 4: {
 			if (channel >= 0) {
-				doSlave(transfer_buf);
-				int len = transfer_buf[2] + 3;
+				uint8_t tosend[32];
+				memcpy(tosend, msg, msg[1]+2);
+				for (int i = 0; i < msg[1]+2; i++) {
+					debugPrint(">%02X", tosend[i]);
+				}
+				debugPrint("\r\n");
+				int len = doSlave(tosend);
+				uart_putc(channel);
+//				uart_putc(0);
+//				debugPrint("outlen=%d\r\n", len);
 				for (int i = 0; i < len; i++) {
 					uart_putc(transfer_buf[i]);
+					debugPrint("<%02X", transfer_buf[i]);
 				}
+//				debugPrint("\r\n");
 				uart_flush();
-//				unsigned char pipe[] = "OWRF1";
-//				pipe[4] += channel;
-////				radio.stopListening();
-////				radio.closeReadingPipe(1);
-////				radio.openReadingPipe(1, *(uint64_t*) pipe);
-//				//			uart_print(transfer_buf[2] + 3);
-//				//			uart_print(":");
-//				nrf24l01_write(transfer_buf, transfer_buf[2] + 3);
-//				_delay_ms(4);
-////				radio.startListening();
-//
-//				for (int count = 0; count < 15; count++) {
-//					if (nrf24l01_readready(&pipe)) {
-//						int l = nrf24l01_getdynamicpayloadsize();
-//						//					uart_print(l);
-//						nrf24l01_read(transfer_buf, l);
-//						uart_write(transfer_buf, l);
-//						debugPrint(
-//								"done for channel=%02X resp=%02X len=%02X\r\n",
-//								transfer_buf[0], transfer_buf[1],
-//								transfer_buf[2]);
-//						//						break;
-//					}
-//					_delay_ms(15);
-//				}
-
-				// Wait here until we get a response, or timeout (250ms)
-				//			unsigned long started_waiting_at = millis();
-				//			bool timeout = false;
-				//			while (!radio.available() && !timeout)
-				//				if ((millis() - started_waiting_at)
-				//						> (1 + radio.getMaxTimeout() / 1000))
-				//					timeout = true;
-				//			if (!timeout) {
-				//				int l = radio.getDynamicPayloadSize();
-				//				if (radio.read(&transfer_buf[0], l)) {
-				//					uart_write(transfer_buf, l);
-				//					debugPrint("done for channel=%02X resp=%02X len=%02X\r\n",
-				//							transfer_buf[0], transfer_buf[1], transfer_buf[2]);
-				//				}
-				//			}
-
 			}
 			phase = 0;
 			bytesRead = 0;
+			msg = transfer_buf;
 		}
 			break;
 		}
