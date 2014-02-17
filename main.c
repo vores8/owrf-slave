@@ -30,6 +30,7 @@ uint8_t doSlave(uint8_t* message) {
 	uint8_t cmd = message[0];
 	uint8_t datalen = 0;
 	uint8_t retval = 0;
+	debugPrint("command=%x\r\n", cmd);
 	if (cmd == 0x10) {
 	} else if (cmd == 0x11) {
 		message[2] = OWFirst() ? 1 : 0;
@@ -59,9 +60,16 @@ uint8_t doSlave(uint8_t* message) {
 		message[2] = OWReset();
 		datalen = 1;
 	} else if (cmd == 0x1D) {
-		OWWriteByte(message[1]);
+//		OWWriteByte(message[1]);
+		uint8_t len;
+		uint8_t* _buf;
+		len = message[1];
+		_buf = message + 2;
+		retval = OWBlock(_buf, len) ? 0x00 : 0xFF;
+		memcpy(message + 2, _buf, len);
+		datalen = len;
 	} else if (cmd == 0x1E) {
-		OWLevel(MODE_NORMAL);
+//		OWLevel(MODE_NORMAL);
 	} else if (cmd == 0x1F) {
 		OWTargetSetup(message[1]);
 	} else if (cmd == 0x20) {
@@ -119,21 +127,19 @@ int main(void) {
 				}
 				debugPrint("\r\n");
 #endif
-				len = doSlave(transfer_buf + 1) + 3;
+				if (transfer_buf[0] == NODENUM) {
+					len = doSlave(transfer_buf + 1) + 3;
 #ifdef DEBUGPRINT
-				debugPrint("retval=%X datalen=%d\r\n", transfer_buf[1], transfer_buf[2]);
-				for (int i = 0; i < transfer_buf[2]; i++) {
-					debugPrint("<%02X", transfer_buf[i+3]);
-				}
-				debugPrint("\r\n");
+					debugPrint("retval=%X datalen=%d\r\n", transfer_buf[1], transfer_buf[2]);
+					for (int i = 0; i < transfer_buf[2]; i++) {
+						debugPrint("<%02X", transfer_buf[i+3]);
+					}
+					debugPrint("\r\n");
 #endif
-				_delay_ms(2);
-			} else {
-				transfer_buf[1] = 0xFF;
-				transfer_buf[2] = 0;
-				len = 3;
+					_delay_ms(5);
+					owrf_write(transfer_buf, len);
+				}
 			}
-			owrf_write(transfer_buf, len);
 		}
 	}
 }
